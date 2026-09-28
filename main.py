@@ -45,12 +45,24 @@ async def is_user_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر /start لتسجيل المشتركين والفحص"""
     user_id = update.effective_user.id
+    user_name = update.effective_user.full_name
     subscribed = await is_user_subscribed(context, user_id)
 
     if subscribed:
+        # إذا كان مستخدماً جديداً لأول مرة
         if user_id not in users_db:
             users_db.add(user_id)
             save_users(users_db)
+            
+            # 🔔 إشعار الأدمن بمشترك جديد
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_CHAT_ID,
+                    text=f"👤 **انضم مشترك جديد للبوت!**\nالاسم: {user_name}\nالآيدي: `{user_id}`",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
 
         await update.message.reply_text(
             "أهلاً بك! تم التحقق من اشتراكك بنجاح ✅\nيمكنك الآن استخدام البوت بحرية."
@@ -74,6 +86,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
     user_id = query.from_user.id
+    user_name = query.from_user.full_name
 
     if data == "check_sub":
         subscribed = await is_user_subscribed(context, user_id)
@@ -82,6 +95,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 users_db.add(user_id)
                 save_users(users_db)
                 
+                # 🔔 إشعار الأدمن عند تأكيد الاشتراك
+                try:
+                    await context.bot.send_message(
+                        chat_id=ADMIN_CHAT_ID,
+                        text=f"👤 **انضم مشترك جديد للبوت!**\nالاسم: {user_name}\nالآيدي: `{user_id}`",
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
+
             await query.edit_message_text("تم التحقق من اشتراكك بنجاح ✅! أهلاً بك في البوت.")
         else:
             await query.answer("لم تشترك بالقناة بعد! يرجى الاشتراك أولاً ❌", show_alert=True)
