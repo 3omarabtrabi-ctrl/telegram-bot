@@ -12,7 +12,7 @@ from telegram.ext import (
 )
 
 # ==================== البيانات الخاصة بك ====================
-BOT_TOKEN = "8923128265:AAFkSZopFgbQXJGXzLg73HIWuBJPa-UUCYQ"
+BOT_TOKEN = "8923128265:AAEu6b8YRv9faBeON83N6Nr8L54Z9GL-Q-k"
 ADMIN_CHAT_ID = 5209535939
 CHANNEL_USERNAME = "@opportunity_master_channel"
 CHANNEL_LINK = "https://t.me/opportunity_master_channel"
