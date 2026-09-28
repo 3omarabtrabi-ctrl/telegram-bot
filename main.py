@@ -1,14 +1,13 @@
+
 import json
 import os
-import html
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
     CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    filters
+    ChannelPostHandler,
+    CallbackQueryHandler
 )
 
 # ==================== البيانات الخاصة بك ====================
@@ -22,12 +21,12 @@ USERS_FILE = "users.json"
 
 def load_users():
     if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
+        with open(USERS_FILE, "r") as f:
             return set(json.load(f))
     return set()
 
 def save_users(users):
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
+    with open(USERS_FILE, "w") as f:
         json.dump(list(users), f)
 
 users_db = load_users()
@@ -41,29 +40,18 @@ async def is_user_subscribed(context: ContextTypes.DEFAULT_TYPE, user_id: int) -
             return True
         return False
     except Exception as e:
-        print(f"خطأ أثناء فحص الاشتراك: {e}")
+        print(f"خطأ في فحص الاشتراك: {e}")
         return False
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """أمر /start لتسجيل المشتركين والفحص"""
-    user = update.effective_user
-    user_id = user.id
-    user_name = user.full_name
+    user_id = update.effective_user.id
     subscribed = await is_user_subscribed(context, user_id)
 
     if subscribed:
         if user_id not in users_db:
             users_db.add(user_id)
             save_users(users_db)
-            
-            try:
-                await context.bot.send_message(
-                    chat_id=ADMIN_CHAT_ID,
-                    text=f"👤 <b>انضم مشترك جديد للبوت!</b>\nالاسم: {html.escape(user_name)}\nالآيدي: <code>{user_id}</code>",
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                print(f"تعذر إرسال إشعار للادمن: {e}")
 
         await update.message.reply_text(
             "أهلاً بك! تم التحقق من اشتراكك بنجاح ✅\nيمكنك الآن استخدام البوت بحرية."
@@ -86,9 +74,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     data = query.data
-    user = query.from_user
-    user_id = user.id
-    user_name = user.full_name
+    user_id = query.from_user.id
 
     if data == "check_sub":
         subscribed = await is_user_subscribed(context, user_id)
@@ -97,15 +83,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 users_db.add(user_id)
                 save_users(users_db)
                 
-                try:
-                    await context.bot.send_message(
-                        chat_id=ADMIN_CHAT_ID,
-                        text=f"👤 <b>انضم مشترك جديد للبوت!</b>\nالاسم: {html.escape(user_name)}\nالآيدي: <code>{user_id}</code>",
-                        parse_mode="HTML"
-                    )
-                except Exception as e:
-                    print(f"تعذر إرسال إشعار للادمن: {e}")
-
             await query.edit_message_text("تم التحقق من اشتراكك بنجاح ✅! أهلاً بك في البوت.")
         else:
             await query.answer("لم تشترك بالقناة بعد! يرجى الاشتراك أولاً ❌", show_alert=True)
@@ -161,29 +138,21 @@ async def handle_channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE
         ]
     ]
 
-    raw_text = channel_post.text or channel_post.caption or "[منشور يحتوي وصائط/ميديا]"
-    safe_text = html.escape(raw_text)
+    post_text = channel_post.text or channel_post.caption or "[منشور يحتوي وسائط/ميديا]"
 
-    message_content = f"📌 <b>منشور جديد في القناة:</b>\n\n{safe_text}\n\n<b>هل تريد مشاركة هذا المنشور مع مشتركي البوت؟</b>"
-
-    try:
-        await context.bot.send_message(
-            chat_id=ADMIN_CHAT_ID,
-            text=message_content,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="HTML"
-        )
-    except Exception as e:
-        print(f"خطأ أثناء إرسال المنشور للأدمن: {e}")
+    await context.bot.send_message(
+        chat_id=ADMIN_CHAT_ID,
+        text=f"📌 **منشور جديد في القناة:**\n\n{post_text}\n\nهل تريد مشاركة هذا المنشور مع مشتركي البوت؟",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
-    # الاستماع لجميع منشورات القنوات
-    app.add_handler(MessageHandler(filters.ChatType.CHANNEL, handle_channel_post))
+    app.add_handler(ChannelPostHandler(handle_channel_post))
     app.add_handler(CallbackQueryHandler(handle_callback))
     
-    print("البوت يعمل الآن ومستعد لاستقبال منشورات القناة...")
-    # السماح بجميع التحديثات بما فيها channel_post
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    print("البوت يعمل الآن ومربوط بالقناة والحساب بنجاح...")
+    app.run_polling()
