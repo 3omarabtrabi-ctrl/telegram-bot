@@ -22,8 +22,11 @@ logging.basicConfig(level=logging.INFO)
 # 📌 التوكن الخاص بك
 API_TOKEN = '8923128265:AAEu6b8YRv9faBeON83N6Nr8L54Z9GL-Q-k'
 
-# 📌 أيدي الأدمن الثابت الخاص بك
+# 📌 آيدي الأدمن الثابت الخاص بك
 ADMIN_ID = 5209535939
+
+# 📌 معرف القناة المربوطة
+CHANNEL_ID = "@opportunity_master_channel"
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
@@ -84,7 +87,7 @@ def format_phone(phone):
 
 
 class Form(StatesGroup):
-    acc_mode = State()  # 'create' أو 'existing'
+    acc_mode = State()
     deposit_amount = State()
     deposit_operation_number = State()
     withdraw_method = State()
@@ -97,6 +100,7 @@ class Form(StatesGroup):
     waiting_for_existing_username = State()
     waiting_for_existing_password = State()
     waiting_for_support_message = State()
+    waiting_for_strike_media = State()
 
 
 class AdminForm(StatesGroup):
@@ -112,9 +116,15 @@ def main_menu(user_id=None):
             InlineKeyboardButton(text='📥 شحن محفظة البوت', callback_data='deposit'),
             InlineKeyboardButton(text='📤 سحب حوالة مالية', callback_data='withdraw'),
         ],
-        [InlineKeyboardButton(text='👥 الإحالات', callback_data='referrals')],
         [
+            InlineKeyboardButton(text='📢 المنشورات والإعلانات', callback_data='show_latest_post'),
+            InlineKeyboardButton(text='☄️ شارك ضربة', callback_data='share_strike'),
+        ],
+        [
+            InlineKeyboardButton(text='👥 الإحالات', callback_data='referrals'),
             InlineKeyboardButton(text='📊 السجلات', callback_data='logs'),
+        ],
+        [
             InlineKeyboardButton(text='🎧 دعم Opportunity Master', callback_data='support'),
         ],
         [
@@ -221,6 +231,146 @@ async def back_to_home(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+# ==================== نظام تلقي واعتماد منشورات القناة ====================
+
+@dp.channel_post()
+async def handle_channel_post(message: types.Message):
+    is_target_channel = False
+    if isinstance(CHANNEL_ID, int) and message.chat.id == CHANNEL_ID:
+        is_target_channel = True
+    elif isinstance(CHANNEL_ID, str) and message.chat.username and message.chat.username.strip('@').lower() == str(CHANNEL_ID).strip('@').lower():
+        is_target_channel = True
+
+    if is_target_channel:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text='✅ نعم', callback_data=f'share_post_yes_{message.message_id}'),
+                    InlineKeyboardButton(text='❌ لا', callback_data=f'share_post_no_{message.message_id}')
+                ]
+            ]
+        )
+        try:
+            await bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f'📢 <b>تم نشر منشور جديد في القناة!</b>\n\nهل تريد اعتماد هذا المنشور وعرضه للمستخدمين داخل البوت؟',
+                reply_markup=keyboard,
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logging.error(f'خطأ في إرسال تنبيه المنشور للأدمن: {e}')
+
+
+@dp.callback_query(lambda c: c.data and (c.data.startswith('share_post_yes_') or c.data.startswith('share_post_no_')))
+async def process_admin_post_choice(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer('❌ هذا الخيار مخصص للأدمن فقط.', show_alert=True)
+        return
+
+    parts = callback.data.split('_')
+    action = parts[2]
+    msg_id = int(parts[3])
+
+    if action == 'yes':
+        database['latest_post'] = {
+            'channel_id': CHANNEL_ID,
+            'message_id': msg_id
+        }
+        save_database()
+        await callback.message.edit_text(
+            '✅ <b>تم اعتماد المنشور بنجاح!</b>\nسيظهر الآن لجميع مستخدمي البوت عند الضغط على زر (📢 المنشورات والإعلانات).',
+            parse_mode='HTML'
+        )
+    else:
+        await callback.message.edit_text('❌ <b>تم التجاوز.</b> لن يتم مشاركة هذا المنشور على البوت.', parse_mode='HTML')
+
+    await callback.answer()
+
+
+@dp.callback_query(lambda c: c.data == 'show_latest_post')
+async def show_latest_post_handler(callback: types.CallbackQuery):
+    post_info = database.get('latest_post')
+    if not post_info or 'message_id' not in post_info:
+        await callback.answer('📢 لا توجد منشورات أو إعلانات جديدة حالياً.', show_alert=True)
+        return
+
+    try:
+        channel_target = post_info.get('channel_id', CHANNEL_ID)
+        await bot.copy_message(
+            chat_id=callback.from_user.id,
+            from_chat_id=channel_target,
+            message_id=post_info['message_id']
+        )
+        await callback.answer()
+    except Exception as e:
+        logging.error(f'خطأ في عرض المنشور للمستخدم: {e}')
+        await callback.answer('❌ تعذر جلب المنشور. تأكد من وجود البوت كأدمن داخل القناة.', show_alert=True)
+
+
+# ==================== نظام شارك ضربة ☄️ ====================
+
+@dp.callback_query(lambda c: c.data == 'share_strike')
+async def share_strike_handler(callback: types.CallbackQuery, state: FSMContext):
+    text = (
+        '☄️ <b>مشاركة ضربة (ربح كبير)</b>\n\n'
+        'قم بإرسال **صورة** أو **فيديو** يوضح ضربتك أو ربحك الكبير داخل الموقع لمشاركته مع الإدارة!'
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text='🏠 إلغاء ورجوع', callback_data='back_to_home')]
+        ]
+    )
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode='HTML')
+    await state.set_state(Form.waiting_for_strike_media)
+    await callback.answer()
+
+
+@dp.message(Form.waiting_for_strike_media)
+async def process_strike_media(message: types.Message, state: FSMContext):
+    if not (message.photo or message.video):
+        await message.answer('❌ يرجى إرسال **صورة** أو **فيديو** حصراً لضربتك:')
+        return
+
+    user_id = message.from_user.id
+    d_name = database.get(user_id, {}).get('display_name', 'مستخدم')
+    phone = database.get(user_id, {}).get('phone', 'غير متوفر')
+    formatted_admin_phone = format_phone(phone)
+    accounts = database.get(user_id, {}).get('accounts', [])
+
+    if accounts:
+        acc_list = '\n'.join([f"• <code>{a['username']}</code>" for a in accounts])
+    else:
+        acc_list = 'لا توجد حسابات مسجلة'
+
+    admin_caption = (
+        f'☄️ <b>ضربة جديدة (ربح كبير) تمت مشاركتها!</b>\n\n'
+        f'👑 اللقب: <b>{d_name}</b>\n'
+        f'📱 الهاتف: <code>{formatted_admin_phone}</code>\n'
+        f'🆔 ID: <code>{user_id}</code>\n'
+        f'🔹 الحسابات المسجلة:\n{acc_list}'
+    )
+
+    if message.caption:
+        admin_caption += f'\n\n💬 تعليق المستخدم: <i>{message.caption}</i>'
+
+    try:
+        await message.copy_to(
+            chat_id=ADMIN_ID,
+            caption=admin_caption,
+            parse_mode='HTML'
+        )
+        await message.answer(
+            '✅ <b>تم إرسال ضربتك للربح الكبير إلى الإدارة بنجاح!</b>\nشكراً لمشاركتك ☄️',
+            reply_markup=main_menu(user_id),
+            parse_mode='HTML'
+        )
+    except Exception as e:
+        logging.error(f'خطأ في إرسال الضربة للأدمن: {e}')
+        await message.answer('❌ حدث خطأ أثناء إرسال الضربة للإدارة. حاول لاحقاً.')
+
+    await state.clear()
+
+
 async def show_single_account_view(callback_or_message, acc, is_callback=True):
     text = (
         f'📌 <b>بيانات تسجيل الدخول لحساب ايشانسي</b>\n\n'
@@ -252,7 +402,6 @@ async def show_single_account_view(callback_or_message, acc, is_callback=True):
         await callback_or_message.answer(text, reply_markup=kb, parse_mode='HTML')
 
 
-# واجهة اختيار نوع إضافة الحساب (جديد أو موجود مسبقاً)
 def get_account_choice_kb():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -323,7 +472,6 @@ async def ichancy_handler(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    # إذا لم يكن لديه أي حساب مسجل
     await callback.message.edit_text(
         '🔹 <b>إدارة حساب ايشانسي</b>\n\nاختر الإجراء الذي تريد القيام به:',
         reply_markup=get_account_choice_kb(),
@@ -342,7 +490,6 @@ async def create_new_ichancy_handler(callback: types.CallbackQuery, state: FSMCo
     await callback.answer()
 
 
-# اختيار: إنشاء حساب جديد
 @dp.callback_query(lambda c: c.data == 'choose_create_new')
 async def process_choose_create_new(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(acc_mode='create')
@@ -368,7 +515,6 @@ async def process_choose_create_new(callback: types.CallbackQuery, state: FSMCon
     await callback.answer()
 
 
-# اختيار: إضافة حساب موجود مسبقاً
 @dp.callback_query(lambda c: c.data == 'choose_existing')
 async def process_choose_existing(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(acc_mode='existing')
@@ -478,10 +624,11 @@ async def process_ichancy_username(message: types.Message, state: FSMContext):
 
     final_acc = f'{base_name}@OM'
     for uid, data in database.items():
-        for acc in data.get('accounts', []):
-            if acc['username'].lower() == final_acc.lower():
-                await message.answer('❌ هذا الاسم مستخدم مسبقاً. يرجى اختيار اسم مختلف:')
-                return
+        if isinstance(data, dict):
+            for acc in data.get('accounts', []):
+                if acc['username'].lower() == final_acc.lower():
+                    await message.answer('❌ هذا الاسم مستخدم مسبقاً. يرجى اختيار اسم مختلف:')
+                    return
 
     await state.update_data(ichancy_username=final_acc)
     await message.answer(
@@ -594,7 +741,6 @@ async def process_ichancy_password(message: types.Message, state: FSMContext):
 async def process_existing_username(message: types.Message, state: FSMContext):
     username = message.text.strip()
 
-    # التحقق من أن اسم المستخدم ينتهي بـ @OM بأي طريقة كتابة (@OM / @Om / @om)
     if not (username.endswith('@OM') or username.endswith('@Om') or username.endswith('@om')):
         await message.answer(
             '❌ يجب أن ينتهي اسم المستخدم بـ <b>@OM</b> (مثال: <code>user123@OM</code>).\nيرجى إعادة إرسال اسم الحساب بشكل صحيح:',
@@ -602,16 +748,15 @@ async def process_existing_username(message: types.Message, state: FSMContext):
         )
         return
 
-    # توحيد اللاحقة إلى @OM
     base_part = username[:-3]
     final_acc = f'{base_part}@OM'
 
-    # التحقق مما إذا كان الحساب مضافاً مسبقاً في القاعدة
     for uid, data in database.items():
-        for acc in data.get('accounts', []):
-            if acc['username'].lower() == final_acc.lower():
-                await message.answer('❌ هذا الحساب مضاف مسبقاً في البوت لدى مستخدم آخر!')
-                return
+        if isinstance(data, dict):
+            for acc in data.get('accounts', []):
+                if acc['username'].lower() == final_acc.lower():
+                    await message.answer('❌ هذا الحساب مضاف مسبقاً في البوت لدى مستخدم آخر!')
+                    return
 
     await state.update_data(existing_username=final_acc)
     await message.answer(
@@ -779,11 +924,13 @@ async def admin_account_review(callback: types.CallbackQuery):
 # ==================== لوحة تحكم الأدمن ====================
 
 @dp.callback_query(lambda c: c.data == 'admin_panel' and c.from_user.id == ADMIN_ID)
-async def admin_panel_handler(callback: types.CallbackQuery):
+async def admin_panel_handler(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text='👥 عرض جميع المستخدمين', callback_data='admin_list_users')],
             [InlineKeyboardButton(text='💸 تحويل رصيد لمستخدم', callback_data='admin_start_transfer')],
+            [InlineKeyboardButton(text='📢 معاينة منشور البوت الحالي', callback_data='show_latest_post')],
             [InlineKeyboardButton(text='🏠 رجوع للقائمة الرئيسية', callback_data='back_to_home')],
         ]
     )
@@ -803,12 +950,13 @@ async def admin_list_users(callback: types.CallbackQuery):
 
     text = '👥 <b>قائمة المستخدمين في البوت:</b>\n\n'
     for uid, data in database.items():
-        name = data.get('display_name', 'مستخدم')
-        bal = format_syp(data.get('balance', 0))
-        real_refs = len(data.get('real_referrals', []))
-        text += (
-            f'• <b>{name}</b> (ID: <code>{uid}</code>)\n الرصيد: {bal} SYP | إحالات حقيقية: {real_refs}\n\n'
-        )
+        if isinstance(data, dict):
+            name = data.get('display_name', 'مستخدم')
+            bal = format_syp(data.get('balance', 0))
+            real_refs = len(data.get('real_referrals', []))
+            text += (
+                f'• <b>{name}</b> (ID: <code>{uid}</code>)\n الرصيد: {bal} SYP | إحالات حقيقية: {real_refs}\n\n'
+            )
 
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
@@ -1220,13 +1368,13 @@ async def user_withdraw_confirmation(callback: types.CallbackQuery):
         f'🚨 <b>طلب سحب جديد!</b>\n\n'
         f'👑 اللقب: <b>{d_name}</b>\n'
         f'📱 الهاتف: <code>{formatted_admin_phone}</code>\n'
-        f'🆔 ID: <code>{user_id}</code>\n\n'
-        f'🔹 <b>حسابات ايشانسي المرتبطة:</b>\n{ichancy_accounts_str}\n\n'
+        f'🆔 ID: <code>{user_id}</code>\n'
+        f'🔹 الحسابات المسجلة:\n{ichancy_accounts_str}\n\n'
         f'💳 الطريقة: <b>{method}</b>\n'
-        f'📌 حساب التلقي: <code>{code}</code>\n'
-        f'💵 المبلغ المطلوب: <b>{format_syp(amount)} SYP</b>\n'
+        f'💵 المبلغ المطلوبة: <b>{format_syp(amount)} SYP</b>\n'
         f'🏷️ الرسوم (10%): <b>{format_syp(fee)} SYP</b>\n'
-        f'💰 الصافي للتحويل: <b>{format_syp(net_amount)} SYP</b>'
+        f'📥 الصافي لتحويله للمستخدم: <b>{format_syp(net_amount)} SYP</b>\n'
+        f'🔢 حساب التلقي: <code>{code}</code>'
     )
 
     try:
@@ -1237,270 +1385,12 @@ async def user_withdraw_confirmation(callback: types.CallbackQuery):
         logging.error(f'خطأ في إرسال طلب السحب للأدمن: {e}')
 
     await callback.message.edit_text(
-        f'⏳ <b>جاري المعالجة...</b>\n\n• المبلغ المطلوب سحبه: <b>{format_syp(amount)} SYP</b>\n• رسوم التحويل (10%): <b>{format_syp(fee)} SYP</b>\n• الصافي المستلم: <b>{format_syp(net_amount)} SYP</b>\n• حساب التلقي: <code>{code}</code>\n\nتم تأكيد وإرسال طلبك إلى الإدارة للتحقق من حساب إيشانسي الخاص بك ومراجعته.',
+        '⏳ <b>تم إرسال طلب السحب للإدارة بنجاح!</b>\nسيتم التأكيد والتحويل في أقرب وقت.',
         parse_mode='HTML',
     )
     await callback.answer()
 
 
-# ==================== معالجة موافقة الأدمن للشحن والسحب ====================
-
-@dp.callback_query(lambda c: c.data.startswith('app_') or c.data.startswith('rej_'))
-async def admin_actions(callback: types.CallbackQuery):
-    parts = callback.data.split('_')
-    action = parts[0]
-    t_type = parts[1]
-    req_id = parts[2]
-
-    if t_type == 'dep':
-        if req_id not in pending_deposits:
-            await callback.answer('❌ انتهت صلاحية الطلب أو تم معالجته مسبقاً.', show_alert=True)
-            return
-        req_data = pending_deposits[req_id]
-        target_id = req_data['user_id']
-        amount = req_data['amount']
-
-        if target_id not in database:
-            database[target_id] = {
-                'balance': 0,
-                'display_name': 'مستخدم',
-                'phone': 'غير متوفر',
-                'accounts': [],
-                'referrals': [],
-                'real_referrals': [],
-                'ref_earnings': 0,
-                'referred_by': None,
-                'logs': [],
-            }
-
-        if action == 'app':
-            database[target_id]['balance'] += amount
-            database[target_id]['logs'].append(
-                f'📥 تم شحن الرصيد بقيمة {format_syp(amount)} SYP'
-            )
-
-            user_data = database[target_id]
-            if (
-                amount >= 50000
-                and user_data.get('referred_by')
-                and not user_data.get('ref_bonus_given', False)
-            ):
-                user_data['ref_bonus_given'] = True
-                referrer_id = user_data['referred_by']
-                if referrer_id in database:
-                    database[referrer_id]['balance'] += 5000
-                    database[referrer_id]['ref_earnings'] += 5000
-                    if target_id not in database[referrer_id]['real_referrals']:
-                        database[referrer_id]['real_referrals'].append(target_id)
-                    database[referrer_id]['logs'].append(
-                        f'🎁 مكافأة إحالة (شحن أول) بقيمة {format_syp(5000)} SYP من المستخدم {target_id}'
-                    )
-                    try:
-                        await bot.send_message(
-                            referrer_id,
-                            f'🔔 <b>إشعار فوري:</b> 🎉 مبروك! تمت إضافة مكافأة إحالة بقيمة {format_syp(5000)} SYP لرصيدك بسبب شحن إحالتك لأول مرة.',
-                            parse_mode='HTML',
-                        )
-                    except Exception:
-                        pass
-
-            save_database()
-
-            dep_kb = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text='⚡ الدخول المباشر للحساب',
-                            url='https://www.ichancy.com',
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            text='🏠 رجوع إلى القائمة الرئيسية',
-                            callback_data='back_to_home',
-                        )
-                    ],
-                ]
-            )
-            await bot.send_message(
-                target_id,
-                f'🔔 <b>إشعار فوري:</b> ✅ تم شحن الرصيد بنجاح بقيمة {format_syp(amount)} SYP.',
-                reply_markup=dep_kb,
-                parse_mode='HTML',
-            )
-            await callback.message.edit_text(
-                callback.message.text + '\n\n✅ [تمت الموافقة وشحن الرصيد بنجاح]',
-                parse_mode='HTML',
-            )
-        else:
-            await bot.send_message(
-                target_id, '🔔 <b>إشعار فوري:</b> ❌ تم رفض طلب الشحن من الإدارة.'
-            )
-            await callback.message.edit_text(
-                callback.message.text + '\n\n❌ [تم الرفض]', parse_mode='HTML'
-            )
-
-        del pending_deposits[req_id]
-
-    elif t_type == 'wit':
-        if req_id not in pending_withdrawals:
-            await callback.answer('❌ انتهت صلاحية الطلب أو تم معالجته مسبقاً.', show_alert=True)
-            return
-        req_data = pending_withdrawals[req_id]
-        target_id = req_data['user_id']
-        amount = req_data['amount']
-
-        if target_id not in database:
-            database[target_id] = {
-                'balance': 0,
-                'display_name': 'مستخدم',
-                'phone': 'غير متوفر',
-                'accounts': [],
-                'referrals': [],
-                'real_referrals': [],
-                'ref_earnings': 0,
-                'referred_by': None,
-                'logs': [],
-            }
-
-        if action == 'app':
-            net_amount = amount - int(amount * 0.10)
-            database[target_id]['logs'].append(
-                f'📤 تم تنفيذ سحب أرباح بقيمة {format_syp(amount)} SYP من حساب ايشانسي'
-            )
-            save_database()
-
-            await bot.send_message(
-                target_id,
-                f'🔔 <b>إشعار فوري:</b> ✅ تمت عملية السحب بنجاح!\nتم سحب مبلغ <b>{format_syp(amount)} SYP</b> (الصافي بعد خصم الرسوم 10%: <b>{format_syp(net_amount)} SYP</b>) وتحويله إلى حسابك.',
-                parse_mode='HTML',
-            )
-            await callback.message.edit_text(
-                callback.message.text + '\n\n✅ [تم تأكيد وإتمام السحب]',
-                parse_mode='HTML',
-            )
-        else:
-            await bot.send_message(
-                target_id,
-                '🔔 <b>إشعار فوري:</b> ❌ تم رفض طلب السحب من الإدارة لعدم كفاية الرصيد أو لسبب آخر.',
-            )
-            await callback.message.edit_text(
-                callback.message.text + '\n\n❌ [تم رفض السحب]', parse_mode='HTML'
-            )
-
-        del pending_withdrawals[req_id]
-
-    await callback.answer()
-
-
-# ==================== نظام الإحالات والسجلات والدعم ====================
-
-@dp.callback_query(lambda c: c.data == 'referrals')
-async def referrals_handler(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    if user_id not in database:
-        database[user_id] = {
-            'balance': 0,
-            'display_name': 'مستخدم',
-            'phone': 'غير متوفر',
-            'accounts': [],
-            'referrals': [],
-            'real_referrals': [],
-            'ref_earnings': 0,
-            'referred_by': None,
-            'logs': [],
-        }
-        save_database()
-
-    user_data = database[user_id]
-    total_ref = len(user_data.get('referrals', []))
-    real_ref = len(user_data.get('real_referrals', []))
-    earnings = format_syp(user_data.get('ref_earnings', 0))
-
-    bot_info = await bot.get_me()
-    ref_link = f"https://t.me/{bot_info.username}?start=ref_{user_id}"
-
-    text = (
-        f'👥 <b>نظام الإحالات الخاص بك</b>\n\n'
-        f'🔗 <b>رابط الإحالة الخاص بك:</b>\n<code>{ref_link}</code>\n\n'
-        f'📊 <b>إحصائيات إحالاتك:</b>\n'
-        f'• إجمالي الذين انضموا عبر رابطك: <b>{total_ref}</b>\n'
-        f'• الإحالات الحقيقية (الذين قاموا بالشحن): <b>{real_ref}</b>\n'
-        f'• أرباحك الكلية من الإحالات: <b>{earnings} SYP</b>\n\n'
-        f'🎁 <i>احصل على مكافأة بقيمة 5.000 ليرة سورية عند شحن كل إحالة جديدة لأول مرة بحد أدنى 50.000 SYP!</i>'
-    )
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text='🏠 رجوع', callback_data='back_to_home')]
-        ]
-    )
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode='HTML')
-    await callback.answer()
-
-
-@dp.callback_query(lambda c: c.data == 'logs')
-async def logs_handler(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    logs = database.get(user_id, {}).get('logs', [])
-
-    if not logs:
-        text = '📊 <b>سجل العمليات:</b>\n\nلا توجد عمليات مسجلة في حسابك حتى الآن.'
-    else:
-        text = '📊 <b>سجل العمليات الأخيرة:</b>\n\n' + '\n'.join([f'• {log}' for log in logs[-10:]])
-
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text='🏠 رجوع', callback_data='back_to_home')]
-        ]
-    )
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode='HTML')
-    await callback.answer()
-
-
-@dp.callback_query(lambda c: c.data == 'support')
-async def support_handler(callback: types.CallbackQuery, state: FSMContext):
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text='🏠 إلغاء ورجوع', callback_data='back_to_home')]
-        ]
-    )
-    await callback.message.edit_text(
-        '🎧 <b>دعم Opportunity Master</b>\n\nأرسل رسالتك أو استفسارك الآن وسيقوم فريق الدعم بالرد عليك في أقرب وقت:',
-        reply_markup=kb,
-        parse_mode='HTML',
-    )
-    await state.set_state(Form.waiting_for_support_message)
-    await callback.answer()
-
-
-@dp.message(Form.waiting_for_support_message)
-async def process_support_message(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    d_name = database.get(user_id, {}).get('display_name', 'مستخدم')
-    phone = database.get(user_id, {}).get('phone', 'غير متوفر')
-    formatted_admin_phone = format_phone(phone)
-
-    admin_text = (
-        f'📩 <b>رسالة دعم جديدة!</b>\n\n'
-        f'👑 من المستخدم: <b>{d_name}</b>\n'
-        f'📱 الهاتف: <code>{formatted_admin_phone}</code>\n'
-        f'🆔 ID: <code>{user_id}</code>\n\n'
-        f'💬 الرسالة:\n{message.text}'
-    )
-
-    try:
-        await bot.send_message(ADMIN_ID, admin_text, parse_mode='HTML')
-        await message.answer(
-            '✅ تم إرسال رسالتك إلى فريق الدعم بنجاح. سنرد عليك قريباً!'
-        )
-    except Exception as e:
-        logging.error(f'خطأ في إرسال رسالة الدعم للأدمن: {e}')
-        await message.answer('❌ تعذر إرسال الرسالة حالياً، يرجى المحاولة لاحقاً.')
-
-    await state.clear()
-
-
-# ==================== تشغيل البوت ====================
 async def main():
     await dp.start_polling(bot)
 
